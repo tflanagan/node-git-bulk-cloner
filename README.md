@@ -21,5 +21,5 @@ Options:
 Example usage:
 
 ```
-$ git-bulk-cloner -s https://gitlab.datacollaborative.com/ -t XXXXXXXXXXXXXXXXXXXX -g mpw-techs -d ~/mpw-techs/
+$ git-bulk-cloner -s https://gitlab-server.com/ -t XXXXXXXXXXXXXXXXXXXX -g 6 -d ~/example-group/
 ```
