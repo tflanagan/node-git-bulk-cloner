@@ -12,6 +12,9 @@ import Debug from 'debug';
 import {
 	exec as execNode
 } from 'child_process';
+import {
+	Throttle
+} from 'generic-throttle';
 
 const pkg = require('../package.json');
 
@@ -20,6 +23,9 @@ const debug = Debug([
 	pkg.name,
 	'main'
 ].join(':'));
+
+/* Globals */
+const throttle = new Throttle(5);
 
 /* Helpers */
 function buildUrl(settings: GitBulkCloner, path: string): string {
@@ -31,24 +37,26 @@ function buildUrl(settings: GitBulkCloner, path: string): string {
 }
 
 async function cloneProject(settings: GitBulkCloner, project: GitLabProject, path: string[]){
-	path.unshift(settings.destination);
-	path.push(project.path);
+	await throttle.acquire(async () => {
+		path.unshift(settings.destination);
+		path.push(project.path);
 
-	const fullpath = join.apply(null, path);
+		const fullpath = join.apply(null, path);
 
-	mkdirSync(fullpath, {
-		recursive: true
-	});
+		mkdirSync(fullpath, {
+			recursive: true
+		});
 
-	try {
-		debug(`Cloning "${project.name}" to "${fullpath}"...`);
+		try {
+			debug(`Cloning "${project.name}" to "${fullpath}"...`);
 
-		await exec(`git clone ${project.ssh_url_to_repo} "${fullpath}"`);
-	}catch(err){
-		if(!err.stderr.match(/already exists/) && !err.stderr.match(/Cloning/)){
-			throw err;
+			await exec(`git clone ${project.ssh_url_to_repo} "${fullpath}"`);
+		}catch(err){
+			if(!err.stderr.match(/already exists/) && !err.stderr.match(/Cloning/)){
+				throw err;
+			}
 		}
-	}
+	});
 }
 
 async function exec(cmd: string): Promise<string> {
@@ -77,16 +85,16 @@ async function exec(cmd: string): Promise<string> {
 	});
 };
 
-async function getGroupProjects(settings: GitBulkCloner, groupId: number | string): Promise<GitLabProject[]> {
-	return await paginateGitLabRequest<GitLabProject[]>(settings, `api/v4/groups/${groupId}/projects?simple=true&include_subgroups=false&with_shared=false&sort=asc&order_by=id`);
+function getGroupProjects(settings: GitBulkCloner, groupId: number | string): Promise<GitLabProject[]> {
+	return paginateGitLabRequest<GitLabProject[]>(settings, `api/v4/groups/${groupId}/projects?simple=true&include_subgroups=false&with_shared=false&sort=asc&order_by=id`);
 }
 
-async function getGroups(settings: GitBulkCloner): Promise<GitLabGroup[]> {
-	return await paginateGitLabRequest<GitLabGroup[]>(settings, `api/v4/groups?all_available=true&top_level_only=true&sort=asc&order_by=id`);
+function getGroups(settings: GitBulkCloner): Promise<GitLabGroup[]> {
+	return paginateGitLabRequest<GitLabGroup[]>(settings, `api/v4/groups?all_available=true&top_level_only=true&sort=asc&order_by=id`);
 }
 
-async function getGroupSubGroups(settings: GitBulkCloner, groupId: number | string): Promise<GitLabGroup[]> {
-	return await paginateGitLabRequest<GitLabGroup[]>(settings, `api/v4/groups/${groupId}/subgroups?all_available=true&sort=asc&order_by=id`);
+function getGroupSubGroups(settings: GitBulkCloner, groupId: number | string): Promise<GitLabGroup[]> {
+	return paginateGitLabRequest<GitLabGroup[]>(settings, `api/v4/groups/${groupId}/subgroups?all_available=true&sort=asc&order_by=id`);
 }
 
 async function paginateGitLabRequest<T>(settings: GitBulkCloner, path: string): Promise<T> {
@@ -124,38 +132,44 @@ async function paginateGitLabRequest<T>(settings: GitBulkCloner, path: string): 
 }
 
 async function processGroup(settings: GitBulkCloner, groupId: number | string, path?: string[]){
-	debug(`Processing Group "${groupId}"`);
+	let subGroups: GitLabGroup[] = [],
+		projects: GitLabProject[] = [];
 
-	const subGroups = await getGroupSubGroups(settings, groupId);
-	const projects = await getGroupProjects(settings, groupId);
+	await throttle.acquire(async () => {
+		debug(`Loading Group "${groupId}"`);
+
+		[
+			subGroups,
+			projects
+		] = await Promise.all([
+			getGroupSubGroups(settings, groupId),
+			getGroupProjects(settings, groupId)
+		]);
+	});
 
 	if(!path){
 		path = [];
 	}
 
-	for(let i = 0; i < subGroups.length; ++i){
-		const subGroup = subGroups[i];
-
-		await processGroup(settings, subGroup.id, path.concat(subGroup.path));
-	}
-
-	for(let i = 0; i < projects.length; ++i){
-		await cloneProject(settings, projects[i], path.concat());
-	}
+	await Promise.all(subGroups.map((subGroup) => {
+		return processGroup(settings, subGroup.id, path!.concat(subGroup.path));
+	}).concat(projects.map((project) => {
+		return cloneProject(settings, project, path!.concat());
+	})));
 }
 
 /* Export */
 export = async function gitBulkCloner(settings: GitBulkCloner){
+	throttle.requestsPerPeriod = +(settings.concurrency || 5);
+
 	if(settings.group){
 		await processGroup(settings, settings.group);
 	}else{
 		const groups = await getGroups(settings);
 
-		for(let i = 0; i < groups.length; ++i){
-			const group = groups[i];
-
-			await processGroup(settings, group.id, [ group.path ]);
-		}
+		await Promise.all(groups.map((group) => {
+			return processGroup(settings, group.id, [ group.path ]);
+		}));
 	}
 }
 

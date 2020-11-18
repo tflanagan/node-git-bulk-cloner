@@ -26,6 +26,7 @@ program.requiredOption('-s, --server <url>', 'GitLab Server URL');
 program.requiredOption('-t, --token <token>', 'GitLab Private Token');
 program.option('-g, --group <group id>', 'Group or Sub-group to clone, defaults to all');
 program.option('-d, --destination <destination folder>', 'Destination folder for cloned repos, defaults to current directory', process.cwd());
+program.option('-c, --concurrency <number>', 'Concurrency of cloning repos, defaults to 5', '5');
 
 program.parse(process.argv);
 
@@ -37,7 +38,8 @@ debug(program.opts());
 			server: program.server,
 			token: program.token,
 			group: program.group,
-			destination: program.destination
+			destination: program.destination,
+			concurrency: program.concurrency
 		});
 	}catch(err){
 		debug(err);

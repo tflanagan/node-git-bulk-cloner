@@ -1,12 +1,3 @@
-interface Config {
-	logging: {
-		directory: string;
-	},
-	setup: {
-		processName: string;
-	}
-}
-
 // https://docs.gitlab.com/ce/api/groups.html
 interface GitLabGroup {
 	id: number;
@@ -27,4 +18,5 @@ interface GitBulkCloner {
 	token: string;
 	group?: number;
 	destination: string;
+	concurrency?: number;
 }
